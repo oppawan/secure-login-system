@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Secure Auth Web App</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background: #f0f2f5;
+      margin: 0;
+    }
+    .card {
+      background: white;
+      padding: 2.2rem;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      width: 360px;
+    }
+    h2 { margin-top: 0; color: #1e293b; }
+    input {
+      width: 100%;
+      padding: 11px;
+      margin: 8px 0;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    input:focus {
+      outline: none;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    }
+    button {
+      width: 100%;
+      padding: 11px;
+      background-color: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 14px;
+      margin-top: 8px;
+      transition: background 0.15s ease;
+    }
+    button:hover { background-color: #1d4ed8; }
+    .hidden { display: none; }
+    .msg { color: #dc2626; font-size: 0.88rem; margin-top: 10px; min-height: 1.2em; word-break: break-word; }
+    .success { color: #16a34a; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <!-- Authentication Forms -->
+  <div id="auth-forms">
+    <h2 id="form-title">Secure Sign In</h2>
+    <input type="email" id="email" placeholder="Email address" autocomplete="username" />
+    <input type="password" id="password" placeholder="Password (Min 8 chars, A-Z, 0-9)" autocomplete="current-password" />
+    
+    <div id="tfa-section" class="hidden">
+      <input type="text" id="tfa-token" placeholder="6-digit Authenticator Code" maxlength="6" />
+      <button onclick="submit2FALogin()">Verify 2FA Code</button>
+    </div>
+
+    <div id="standard-buttons">
+      <button onclick="handleAuth('/api/login')">Sign In</button>
+      <button style="background: #10b981; margin-top: 8px;" onclick="handleAuth('/api/register')">Register New Account</button>
+    </div>
+  </div>
+
+  <!-- Dashboard (Shown when logged in) -->
+  <div id="dashboard" class="hidden">
+    <h2>Welcome</h2>
+    <p>Logged in as: <strong id="user-display"></strong></p>
+    
+    <div id="setup-2fa-area">
+      <button onclick="setup2FA()">Enable Two-Factor Auth (2FA)</button>
+      <div id="qr-container" class="hidden" style="text-align: center; margin-top: 15px;">
+        <p style="font-size: 13px; color: #475569;">Scan with Google Authenticator or Authy:</p>
+        <img id="qr-img" width="160" height="160" alt="2FA QR Code" />
+        <input type="text" id="confirm-token" placeholder="Enter 6-digit code from app" maxlength="6"/>
+        <button onclick="confirm2FA()">Confirm & Activate 2FA</button>
+      </div>
+    </div>
+
+    <button style="background: #64748b; margin-top: 20px;" onclick="logout()">Logout</button>
+  </div>
+
+  <p id="msg-box" class="msg"></p>
+</div>
+
+<script>
+  const msgBox = document.getElementById('msg-box');
+
+  function showMsg(text, isError = true) {
+    msgBox.innerText = text;
+    msgBox.className = isError ? 'msg' : 'msg success';
+  }
+
+  async function checkSession() {
+    try {
+      const res = await fetch('/api/me');
+      if (res.ok) {
+        const data = await res.json();
+        document.getElementById('auth-forms').classList.add('hidden');
+        document.getElementById('dashboard').classList.remove('hidden');
+        document.getElementById('user-display').innerText = data.user.email;
+        if (data.user.two_factor_enabled) {
+          document.getElementById('setup-2fa-area').innerHTML = '<p style="color: #16a34a; font-weight: 600;">✓ 2FA is currently active</p>';
+        }
+      }
+    } catch (e) {
+      // not logged in
+    }
+  }
+
+  async function handleAuth(endpoint) {
+    showMsg('');
+    const email = document.getElementById('email').value;
+    const password = document.getElementById('password').value;
+
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await res.json();
+
+      if (!res.ok) return showMsg(data.error);
+
+      if (data.require2FA) {
+        document.getElementById('standard-buttons').classList.add('hidden');
+        document.getElementById('tfa-section').classList.remove('hidden');
+        showMsg(data.message, false);
+        return;
+      }
+
+      showMsg('Success!', false);
+      checkSession();
+    } catch (e) {
+      showMsg('Network error. Check if server is running.');
+    }
+  }
+
+  async function submit2FALogin() {
+    const token = document.getElementById('tfa-token').value;
+    const res = await fetch('/api/2fa/verify-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    const data = await res.json();
+    if (!res.ok) return showMsg(data.error);
+
+    checkSession();
+  }
+
+  async function setup2FA() {
+    const res = await fetch('/api/2fa/setup');
+    const data = await res.json();
+    document.getElementById('qr-img').src = data.qrCode;
+    document.getElementById('qr-container').classList.remove('hidden');
+  }
+
+  async function confirm2FA() {
+    const token = document.getElementById('confirm-token').value;
+    const res = await fetch('/api/2fa/confirm-setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    const data = await res.json();
+    if (!res.ok) return showMsg(data.error);
+
+    showMsg(data.message, false);
+    checkSession();
+  }
+
+  async function logout() {
+    await fetch('/api/logout', { method: 'POST' });
+    window.location.reload();
+  }
+
+  checkSession();
+</script>
+</body>
+</html>
